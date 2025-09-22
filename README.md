@@ -188,3 +188,55 @@ Ansible variables: `ansible/inventories/<env>/group_vars/all.yml` (overwritten b
 - **Upgrades**:
   - PHP/Nginx or WordPress updates via Ansible role changes, then rerun the playbook.
   - DB engine patching
+
+---
+
+## Security
+
+- Instances run in **private subnets** (no direct public IPs).
+- Only the **ALB** is internet-facing.
+- **SSM Session Manager** replaces SSH for remote access.
+- Database password and WordPress salts are stored securely in **SSM Parameter Store**.
+- Security groups strictly control traffic flows:
+  - ALB → EC2 (HTTP/80)
+  - EC2 → RDS (MySQL/3306)
+  - EC2 → EFS (2049)
+
+---
+
+## Cost considerations
+
+- **RDS Multi-AZ** and **EFS** incur additional costs.
+- **ASG min=2** means at least two EC2 instances are always running.
+- Use `t3.small` or smaller instances in dev/test to reduce spend.
+
+---
+
+## Troubleshooting
+
+- **ALB health checks failing**:  
+  Verify `/healthz` endpoint returns `200 OK`. Check Nginx logs via SSM.
+- **WordPress cannot connect to DB**:  
+  Ensure SSM parameters are correct and security groups allow EC2→RDS.
+- **EFS not mounting**:  
+  Check that mount targets exist in all subnets and that `amazon-efs-utils` is installed.
+
+---
+
+## Cleanup
+
+To destroy all resources:
+```bash
+make destroy ENV=dev
+```
+
+Ensure that no critical data is stored in RDS/EFS before running this.
+
+---
+
+## Assumptions & trade-offs
+
+- Uses **EFS** for shared `wp-content` (simpler than S3 plugin sync).
+- No CDN/WAF included for simplicity (could be added with CloudFront + WAF).
+- HTTPS termination at ALB is not enabled by default (can be added with ACM cert).
+- Secrets are stored in **SSM**, not Secrets Manager, for simplicity and cost.
