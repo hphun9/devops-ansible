@@ -1,104 +1,190 @@
-```bash
-./
-├── .github/
-│   └── workflows/
-│       ├── terraform-ci.yml          # fmt/validate/plan & tflint
-│       └── ansible-ci.yml            # ansible-lint + yamllint
-├── .pre-commit-config.yaml           # fmt, lint, trailing-whitespace, tflint, yamllint
-├── .gitignore
-├── LICENSE
-├── Makefile                          # init/plan/apply/ansible
-├── README.md                         
-├── docs/
-│   ├── architecture.md               
-│   ├── runbook.md                   
-│   └── diagrams/
-│       └── ha-wordpress.drawio
-├── envs/                             
-│   ├── dev/
-│   │   ├── backend.hcl               # S3/DynamoDB remote state (dev)
-│   │   ├── main.tf                  
-│   │   ├── providers.tf
-│   │   ├── terraform.tfvars          # variables for specific environment
-│   │   └── variables.tf
-│   ├── stage/
+# WordPress – Highly Available on AWS (Terraform + Ansible)
+
+Deploy a production-ready, **highly available WordPress** stack on AWS using **Terraform** (infrastructure) and **Ansible** (configuration).  
+Architecture: **ALB** → **Auto Scaling Group (EC2)** running **Nginx + PHP-FPM + WordPress**, **RDS MySQL (Multi-AZ)** for the database, **EFS** to share `wp-content`, all inside a **VPC** spanning multiple AZs.
+
+---
+
+## Table of contents
+- [Architecture](#architecture)
+- [Repository structure](#repository-structure)
+- [Prerequisites](#prerequisites)
+- [Quick start (dev)](#quick-start-dev)
+- [Configuration](#configuration)
+- [How it works](#how-it-works)
+- [Operations](#operations)
+- [Security](#security)
+- [Cost considerations](#cost-considerations)
+- [Troubleshooting](#troubleshooting)
+- [Cleanup](#cleanup)
+- [Assumptions & trade-offs](#assumptions--trade-offs)
+
+---
+
+## Architecture
+
+```
+              Internet
+                 │
+             [ ALB ]  (multi-AZ)
+            /       \
+        AZ-a       AZ-b
+        ┌───┐      ┌───┐
+        │EC2│      │EC2│  (ASG: min=2, desired=2)
+        └─┬─┘      └─┬─┘
+          │          │
+       /wp-content shared via
+          │          │
+         [ EFS ]  (multi-AZ mounts)
+          │
+      ┌─────────── VPC ────────────┐
+      │  Public subnets (ALB)      │
+      │  Private subnets (EC2/RDS) │
+      │  NAT GW for outbound       │
+      └────────────────────────────┘
+
+          [ RDS MySQL ]  (Multi-AZ)
+                 │
+          Credentials & salts
+               [ SSM ]
+```
+
+**High availability** is achieved via: multi-AZ subnets, ALB across AZs, ASG with ≥2 instances, RDS Multi-AZ, and EFS mount targets in each AZ.
+
+---
+
+## Repository structure
+
+```
+.
+├── envs/
+│   ├── dev/            # Terraform root for each environment
 │   │   ├── backend.hcl
 │   │   ├── main.tf
 │   │   ├── providers.tf
 │   │   ├── terraform.tfvars
 │   │   └── variables.tf
-│   └── prod/
-│       ├── backend.hcl
-│       ├── main.tf
-│       ├── providers.tf
-│       ├── terraform.tfvars
-│       └── variables.tf
-├── modules/                          # Terraform reusable modules
-│   ├── vpc/
-│   │   ├── main.tf                   # VPC, IGW, NAT, 2+AZ subnets
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   ├── security/
-│   │   ├── main.tf                   # Security Groups: ALB, EC2, RDS, EFS
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   ├── alb/
-│   │   ├── main.tf                   # ALB + target group + listeners + health checks
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   ├── asg_ec2/
-│   │   ├── main.tf                   # Launch template + AutoScaling (min>=2)
-│   │   ├── user_data.sh              # cloud-init to install Ansible deps/SSM
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   ├── rds/
-│   │   ├── main.tf                   # MySQL/Aurora, Multi-AZ, params
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   ├── efs/
-│   │   ├── main.tf                   # EFS + mount targets (share wp-content)
-│   │   ├── variables.tf
-│   │   └── outputs.tf
-│   └── ssm/
-│       ├── main.tf                   # SSM parameters (DB creds, salts…)
-│       ├── variables.tf
-│       └── outputs.tf
+├── modules/            # Reusable Terraform modules
+│   ├── vpc/ ├── security/ ├── alb/ ├── asg_ec2/
+│   ├── rds/ ├── efs/ └── ssm/
 ├── ansible/
-│   ├── inventories/
-│   │   ├── dev/
-│   │   │   ├── aws_ec2.yml           # Dynamic inventory plugin
-│   │   │   └── group_vars/
-│   │   │       └── all.yml           # WP, DB endpoint (get from Terraform outputs)
-│   │   ├── stage/
-│   │   │   ├── aws_ec2.yml
-│   │   │   └── group_vars/all.yml
-│   │   └── prod/
-│   │       ├── aws_ec2.yml
-│   │       └── group_vars/all.yml
+│   ├── inventories/{dev,stage,prod}/
+│   │   ├── aws_ec2.yml        # Dynamic inventory plugin
+│   │   └── group_vars/all.yml
 │   ├── roles/
-│   │   ├── common/                   # timezone, packages, fail2ban, cloudwatch/ssm
-│   │   │   ├── tasks/main.yml
-│   │   │   └── handlers/main.yml
-│   │   ├── nginx-php/                # Nginx + PHP-FPM
-│   │   │   ├── tasks/main.yml
-│   │   │   ├── templates/*.j2
-│   │   │   └── handlers/main.yml
-│   │   ├── efs-mount/                # mount EFS -> /var/www/html/wp-content
-│   │   │   └── tasks/main.yml
-│   │   └── wordpress/
-│   │       ├── tasks/main.yml        # download WP, create wp-config.php, perms
-│   │       ├── templates/wp-config.php.j2
-│   │       └── files/                # (optional) mu-plugins, healthcheck.php
-│   ├── playbooks/
-│   │   └── site.yml                  # include common, nginx-php, efs-mount, wordpress
-│   ├── requirements.yml              # Galaxy roles/collections
+│   │   ├── common/ ├── nginx-php/ ├── efs-mount/ └── wordpress/
+│   ├── playbooks/site.yml
+│   ├── requirements.yml
 │   └── ansible.cfg
 ├── scripts/
-│   ├── export_tf_outputs.sh          # outputs -> ansible group_vars
-│   ├── ssh_bastion.sh                # ssh through bastion
-│   └── health_check.sh
-└── packer/                           # (optional) Golden AMI
-    ├── wordpress.json
-    └── http/user_data.sh
-
+│   └── export_tf_outputs.sh
+├── .github/workflows/  # Optional CI for lint/validate
+├── Makefile
+└── README.md
 ```
+
+---
+
+## Prerequisites
+
+- **AWS account** with permissions to create VPC/EC2/ALB/RDS/EFS/SSM.
+- **Terraform ≥ 1.5**, **AWS CLI**, **Ansible ≥ 2.15**, **Python 3**.
+- S3 bucket + DynamoDB table for Terraform remote state (you’ll reference them in `backend.hcl`).
+- An existing **EC2 key pair** name (for the `key_name` variable, if you want SSH; SSM is enabled anyway).
+
+---
+
+## Quick start (dev)
+
+1. **Configure remote state and variables**
+
+Edit `envs/dev/backend.hcl`:
+```hcl
+bucket         = "YOUR-tfstate-bucket-dev"
+key            = "wordpress-ha/dev/terraform.tfstate"
+region         = "ap-southeast-1"
+dynamodb_table = "YOUR-tflock-table"
+encrypt        = true
+```
+
+Edit `envs/dev/terraform.tfvars` (sample values):
+```hcl
+region          = "ap-southeast-1"
+project         = "wp-ha"
+env             = "dev"
+vpc_cidr        = "10.20.0.0/16"
+public_subnets  = ["10.20.1.0/24", "10.20.2.0/24"]
+private_subnets = ["10.20.11.0/24", "10.20.12.0/24"]
+key_name        = "YOUR-keypair"
+alb_allowed_cidrs = ["0.0.0.0/0"]
+```
+
+2. **Provision infrastructure**
+```bash
+make init     # terraform init with backend
+make plan
+make apply    # creates VPC, ALB, ASG, EFS, RDS, SSM params
+```
+
+3. **Install Ansible collections**
+```bash
+ansible-galaxy collection install -r ansible/requirements.yml
+```
+
+4. **Configure and deploy WordPress**
+```bash
+make ansible  # exports Terraform outputs to Ansible group_vars and runs playbook
+```
+
+5. **Access the site**
+
+After `apply`, Terraform prints `alb_dns_name`.  
+Open: `http://<alb_dns_name>` → WordPress install screen.
+
+---
+
+## Configuration
+
+Key Terraform variables (per env in `terraform.tfvars`):
+
+| Variable | Purpose |
+|---|---|
+| `region`, `project`, `env` | Global naming/region |
+| `vpc_cidr`, `public_subnets`, `private_subnets` | VPC & subnet layout (≥2 AZs) |
+| `key_name` | EC2 key pair name (optional if using SSM only) |
+| `instance_type` | EC2 size for PHP/Nginx nodes |
+| `db_engine`, `db_engine_ver`, `db_instance`, `db_name`, `db_username` | RDS settings |
+| `alb_allowed_cidrs` | Who can reach ALB: default `["0.0.0.0/0"]` |
+
+**Secrets**: DB password and WP salts are generated by Terraform and stored in **SSM Parameter Store** under `/<project>-<env>/wordpress/...`.
+
+Ansible variables: `ansible/inventories/<env>/group_vars/all.yml` (overwritten by `scripts/export_tf_outputs.sh` with key outputs like `ssm_prefix` and `alb_dns_name`).
+
+---
+
+## How it works
+
+- **Terraform** provisions:
+  - VPC (IGW, NAT, public/private route tables, subnets across ≥2 AZs)
+  - Security Groups (ALB→EC2:80, EC2→RDS:3306, EFS access)
+  - **EFS** file system (+ mount targets in each private subnet)
+  - **RDS MySQL** with Multi-AZ and automatic password generation
+  - **ALB** and **Target Group**, HTTP listener
+  - **ASG + Launch Template** with Amazon Linux 2; **user_data** mounts EFS and enables SSM
+  - **SSM Parameters** for DB creds and WordPress salts
+
+- **Ansible** (dynamic inventory `aws_ec2` filters instances by tag `Role=wordpress`):
+  - Installs Nginx + PHP-FPM and WordPress
+  - Renders `wp-config.php` using **SSM lookups** (no secrets in git)
+  - Ensures `wp-content` is on **EFS** → shared media across nodes
+  - Exposes `/healthz` for ALB health checks
+
+---
+
+## Operations
+
+- **Scaling**: change `desired_capacity`/`max_size` in `modules/asg_ec2/main.tf` (or via the console) and re-`apply`.
+- **Zero-touch SSH**: use **AWS Systems Manager Session Manager** to connect to instances (IAM role already attached).
+- **Upgrades**:
+  - PHP/Nginx or WordPress updates via Ansible role changes, then rerun the playbook.
+  - DB engine patching
