@@ -1,0 +1,8 @@
+**/.terraform/*
+**/terraform.tfstate*
+**/tfplan
+*.retry
+.venv
+.packages
+.idea
+.DS_Store
