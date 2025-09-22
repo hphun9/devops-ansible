@@ -1,0 +1,20 @@
+name: terraform-ci
+on:
+  pull_request:
+  push:
+    paths:
+      - 'envs/**'
+      - 'modules/**'
+      - 'Makefile'
+jobs:
+  tf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: 1.7.5 }
+      - name: Format
+        run: terraform fmt -check -recursive
+      - name: Validate (dev)
+        working-directory: envs/dev
+        run: terraform init -backend=false && terraform validate

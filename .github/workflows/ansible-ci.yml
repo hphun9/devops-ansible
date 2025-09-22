@@ -1,0 +1,16 @@
+name: ansible-ci
+on: [push, pull_request]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+      - name: Install tools
+        run: |
+          pip install ansible ansible-lint yamllint
+      - name: Lint
+        run: |
+          yamllint -s .
+          ansible-lint

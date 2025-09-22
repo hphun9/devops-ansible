@@ -1,0 +1,15 @@
+---
+- name: Ensure mount target dir
+  file: { path: /var/www/html/wp-content, state: directory, owner: nginx, group: nginx, mode: '0755' }
+
+- name: Verify EFS fstab entry exists
+  lineinfile:
+    path: /etc/fstab
+    regexp: 'efs .* /var/www/html/wp-content '
+    insertafter: EOF
+    line: "{{ lookup('env','EFS_FSTAB_LINE') | default('# efs configured by cloud-init', true) }}"
+  when: false  # user_data added fstab; this task will keep idempotent
+
+- name: Mount all
+  command: mount -a
+  changed_when: false

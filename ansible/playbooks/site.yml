@@ -1,0 +1,13 @@
+---
+- name: Configure HA WordPress nodes
+  hosts: tag_wordpress
+  become: yes
+  vars:
+    doc_root: /var/www/html
+    wp_root: "{{ doc_root }}/wordpress"
+    wp_content: "{{ wp_root }}/wp-content"   # wp role will bind tới EFS have mounted
+  roles:
+    - role: common
+    - role: nginx-php
+    - role: efs-mount
+    - role: wordpress

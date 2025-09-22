@@ -1,8 +1,9 @@
 **/.terraform/*
 **/terraform.tfstate*
+**/terraform.tfstate.backup
 **/tfplan
+.terraform.lock.hcl
 *.retry
 .venv
-.packages
 .idea
 .DS_Store

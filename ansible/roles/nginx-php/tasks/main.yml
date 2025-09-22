@@ -1,0 +1,56 @@
+---
+- name: Install Nginx and PHP-FPM
+  yum:
+    name:
+      - nginx
+      - php
+      - php-fpm
+      - php-mysqlnd
+      - php-opcache
+      - php-gd
+      - php-mbstring
+      - php-xml
+      - php-zip
+      - php-curl
+    state: present
+
+- name: Configure PHP limits
+  lineinfile:
+    path: /etc/php.ini
+    regexp: '^{{ item.key }} ='
+    line: "{{ item.key }} = {{ item.value }}"
+  loop:
+    - { key: 'memory_limit', value: '{{ php_memory_limit }}' }
+    - { key: 'upload_max_filesize', value: '{{ php_upload_max_filesize }}' }
+    - { key: 'post_max_size', value: '{{ php_post_max_filesize | default(php_post_max_size) }}' }
+
+- name: Nginx vhost
+  copy:
+    dest: /etc/nginx/conf.d/wordpress.conf
+    content: |
+      server {
+        listen 80 default_server;
+        root /var/www/html/wordpress;
+        index index.php index.html;
+        location / {
+          try_files $uri $uri/ /index.php?$args;
+        }
+        location ~ \.php$ {
+          include fastcgi_params;
+          fastcgi_pass 127.0.0.1:9000;
+          fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        }
+        location ~* \.(jpg|jpeg|png|gif|ico|css|js)$ {
+          expires 365d;
+        }
+        location /healthz {
+          return 200 'ok';
+          add_header Content-Type text/plain;
+        }
+      }
+  notify: restart nginx
+
+- name: Enable services
+  service: { name: nginx, state: started, enabled: yes }
+- name: Enable PHP-FPM
+  service: { name: php-fpm, state: started, enabled: yes }

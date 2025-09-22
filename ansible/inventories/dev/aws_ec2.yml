@@ -1,0 +1,12 @@
+plugin: aws_ec2
+regions:
+  - ap-southeast-1
+keyed_groups:
+  - key: tags.Role
+    prefix: tag
+filters:
+  tag:Role: wordpress
+hostnames:
+  - private-ip-address
+compose:
+  ansible_host: private_ip_address

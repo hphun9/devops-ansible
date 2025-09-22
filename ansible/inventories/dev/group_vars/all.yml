@@ -1,0 +1,6 @@
+app_env: dev
+ssm_prefix: "/wp-ha-dev/wordpress"  # overwrite by script export (after apply)
+php_memory_limit: "256M"
+php_upload_max_filesize: "64M"
+php_post_max_size: "64M"
+wp_site_url: "http://{{ hostvars[groups['tag_wordpress'][0]].ansible_host | default('localhost') }}"

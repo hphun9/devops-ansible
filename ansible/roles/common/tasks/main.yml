@@ -1,0 +1,21 @@
+---
+- name: Ensure basic packages
+  yum:
+    name:
+      - git
+      - unzip
+      - curl
+      - jq
+    state: present
+
+- name: Ensure time sync
+  service:
+    name: chronyd
+    state: started
+    enabled: yes
+
+- name: Ensure SSM agent
+  service:
+    name: amazon-ssm-agent
+    state: started
+    enabled: yes
